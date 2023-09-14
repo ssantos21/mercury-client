@@ -7,6 +7,7 @@ use serde::{Serialize, Deserialize};
 use crate::error::CError;
 
 pub async fn create(
+    statechain_id: &str,
     client_seckey: &SecretKey,
     client_pubkey: &PublicKey,
     server_pubkey: &PublicKey,
@@ -15,7 +16,7 @@ pub async fn create(
     input_pubkey: &XOnlyPublicKey, 
     input_scriptpubkey: &ScriptBuf, 
     input_amount: u64, 
-    output: TxOut) -> Result<(), Box<dyn std::error::Error>> {
+    output: TxOut) -> Result<Transaction, Box<dyn std::error::Error>> {
 
     let outputs = [output].to_vec();
 
@@ -61,6 +62,7 @@ pub async fn create(
         ).unwrap();
 
         let sig = musig_sign_psbt_taproot(
+            statechain_id,
             client_seckey,
             client_pubkey,
             server_pubkey,
@@ -101,13 +103,13 @@ pub async fn create(
     .expect("failed to verify transaction");
 
 
-    Ok(())
+    Ok(tx)
 }
 
 
 #[derive(Serialize, Deserialize)]
 pub struct PublicNonceRequestPayload<'r> {
-    server_public_key: &'r str,
+    statechain_id: &'r str,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -117,9 +119,9 @@ pub struct ServerPublicNonceResponsePayload<'r> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PartialSignatureRequestPayload<'r> {
-    server_public_key: &'r str,
+    statechain_id: &'r str,
     keyaggcoef: &'r str,
-    negate_seckey: bool,
+    negate_seckey: u8,
     session: &'r str,
 }
 
@@ -129,6 +131,7 @@ pub struct PartialSignatureResponsePayload<'r> {
 }
 
 async fn musig_sign_psbt_taproot(
+    statechain_id: &str,
     client_seckey: &SecretKey,
     client_pubkey: &PublicKey,
     server_pubkey: &PublicKey,
@@ -154,7 +157,7 @@ async fn musig_sign_psbt_taproot(
     let request = client.post(&format!("{}/{}", endpoint, path));
 
     let payload = PublicNonceRequestPayload {
-        server_public_key: &server_pubkey.to_string(),
+        statechain_id,
     };
 
     let value = match request.json(&payload).send().await {
@@ -169,7 +172,13 @@ async fn musig_sign_psbt_taproot(
 
     let response: ServerPublicNonceResponsePayload = serde_json::from_str(value.as_str()).expect(&format!("failed to parse: {}", value.as_str()));
 
-    let server_pub_nonce_bytes = hex::decode(response.server_pubnonce).unwrap();
+    let mut server_pubnonce_hex = response.server_pubnonce.to_string();
+
+    if server_pubnonce_hex.starts_with("0x") {
+        server_pubnonce_hex = server_pubnonce_hex[2..].to_string();
+    }
+
+    let server_pub_nonce_bytes = hex::decode(server_pubnonce_hex).unwrap();
     
     let server_pub_nonce = MusigPubNonce::from_slice(server_pub_nonce_bytes.as_slice()).unwrap();
 
@@ -214,12 +223,19 @@ async fn musig_sign_psbt_taproot(
 
     let (key_agg_coef, negate_seckey) = session.get_keyaggcoef_and_negation_seckey(&secp, &key_agg_cache, &server_pubkey);
 
+    let negate_seckey = match negate_seckey {
+        true => 1,
+        false => 0,
+    };
+
     let payload = PartialSignatureRequestPayload {
-        server_public_key: &server_pubkey.to_string(),
+        statechain_id,
         keyaggcoef: &hex::encode(key_agg_coef.serialize()),
         negate_seckey,
         session: &hex::encode(session.serialize()),
     };
+
+    println!("payload signature: {:?}", payload);
 
     let endpoint = "http://127.0.0.1:8000";
     let path = "partial_signature";
@@ -239,7 +255,13 @@ async fn musig_sign_psbt_taproot(
 
     let response: PartialSignatureResponsePayload = serde_json::from_str(value.as_str()).expect(&format!("failed to parse: {}", value.as_str()));
 
-    let server_partial_sig_bytes = hex::decode(response.partial_sig).unwrap();
+    let mut server_partial_sig_hex = response.partial_sig.to_string();
+
+    if server_partial_sig_hex.starts_with("0x") {
+        server_partial_sig_hex = server_partial_sig_hex[2..].to_string();
+    }
+
+    let server_partial_sig_bytes = hex::decode(server_partial_sig_hex).unwrap();
 
     let server_partial_sig = MusigPartialSignature::from_slice(server_partial_sig_bytes.as_slice()).unwrap();
 

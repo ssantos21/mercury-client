@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, thread, time::Duration};
 
 use bitcoin::{Network, secp256k1, hashes::sha256, Address, address, TxOut};
 use secp256k1_zkp::{Secp256k1, Message, PublicKey, musig::MusigKeyAggCache, SecretKey, XOnlyPublicKey};
@@ -40,22 +40,26 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
     let mut utxo_list = electrum::get_script_list_unspent(&client, &address);
 
+    let delay = Duration::from_secs(5);
+
     while utxo_list.len() == 0 {
         utxo_list = electrum::get_script_list_unspent(&client, &address);
+        thread::sleep(delay);
     }
 
     let utxo = utxo_list.pop().unwrap();
 
     println!("utxo: {:?}", utxo);
 
-/*     let absolute_fee: u64 = 800;
+    let absolute_fee: u64 = 800;
     let amount_out = utxo.value - absolute_fee;
 
     let to_address = Address::p2tr(&Secp256k1::new(), client_pubkey_share.x_only_public_key().0, None, network);
 
     let tx_out = TxOut { value: amount_out, script_pubkey: to_address.script_pubkey() };
 
-    let _ = crate::transaction::create(
+    let tx = crate::transaction::create(
+        &statechain_id,
         &client_secret_key,
         &client_pubkey_share,
         &server_pubkey_share,
@@ -64,7 +68,12 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
         &aggregate_pub_key, 
         &address.script_pubkey(), 
         utxo.value, 
-        tx_out).await.unwrap(); */
+        tx_out).await.unwrap();
+
+    let tx_bytes = bitcoin::consensus::encode::serialize(&tx);
+    let txid = electrum::transaction_broadcast_raw(&client, &tx_bytes);
+
+    println!("txid sent: {}", txid);
 
     Ok(())
 
