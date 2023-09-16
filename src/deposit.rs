@@ -1,11 +1,14 @@
 use std::{str::FromStr, thread, time::Duration};
 
-use bitcoin::{Network, secp256k1, hashes::sha256, Address, address, TxOut};
+use bitcoin::{Network, secp256k1, hashes::sha256, Address, address, TxOut, blockdata::fee_rate};
 use secp256k1_zkp::{Secp256k1, Message, PublicKey, musig::MusigKeyAggCache, SecretKey, XOnlyPublicKey};
 use serde::{Serialize, Deserialize};
 use sqlx::Sqlite;
 
 use crate::{key_derivation, error::CError, electrum};
+
+const TX_SIZE: u64 = 112; // virtual size one input P2TR and one output P2TR
+// 163 is the real size one input P2TR and one output P2TR
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DepositRequestPayload {
@@ -51,14 +54,25 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
     println!("utxo: {:?}", utxo);
 
-    let absolute_fee: u64 = 800;
+    let fee_rate_btc_per_kb = electrum::estimate_fee(&client, 1);
+    let fee_rate_sats_per_byte = (fee_rate_btc_per_kb * 100000.0) as u64;
+
+    let absolute_fee: u64 = TX_SIZE * fee_rate_sats_per_byte; 
     let amount_out = utxo.value - absolute_fee;
 
     let to_address = Address::p2tr(&Secp256k1::new(), client_pubkey_share.x_only_public_key().0, None, network);
 
     let tx_out = TxOut { value: amount_out, script_pubkey: to_address.script_pubkey() };
 
+    let block_header = electrum::block_headers_subscribe_raw(&client);
+    let mut block_height = block_header.height;
+
+    block_height = block_height + 12000;
+
+    println!("block_height: {}", block_height);
+
     let tx = crate::transaction::create(
+        block_height as u32,
         &statechain_id,
         &client_secret_key,
         &client_pubkey_share,
@@ -69,6 +83,8 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
         &address.script_pubkey(), 
         utxo.value, 
         tx_out).await.unwrap();
+
+    println!("tx size: {}", tx.vsize());
 
     let tx_bytes = bitcoin::consensus::encode::serialize(&tx);
     let txid = electrum::transaction_broadcast_raw(&client, &tx_bytes);

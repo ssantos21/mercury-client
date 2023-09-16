@@ -1,12 +1,13 @@
 use std::{str::FromStr, collections::BTreeMap};
 
-use bitcoin::{Txid, ScriptBuf, Transaction, absolute, TxIn, OutPoint, Witness, TxOut, psbt::{Psbt, Input, PsbtSighashType}, sighash::{TapSighashType, SighashCache, self, TapSighash}, secp256k1, taproot::{TapTweakHash, self}, hashes::Hash};
+use bitcoin::{Txid, ScriptBuf, Transaction, absolute, TxIn, OutPoint, Witness, TxOut, psbt::{Psbt, Input, PsbtSighashType}, sighash::{TapSighashType, SighashCache, self, TapSighash}, secp256k1, taproot::{TapTweakHash, self}, hashes::Hash, locktime};
 use secp256k1_zkp::{SecretKey, PublicKey, XOnlyPublicKey, Secp256k1, schnorr::Signature, Message, musig::{MusigSessionId, MusigPubNonce, MusigKeyAggCache, MusigAggNonce, BlindingFactor, MusigSession, MusigPartialSignature}, new_musig_nonce_pair, KeyPair};
 use serde::{Serialize, Deserialize};
 
 use crate::error::CError;
 
 pub async fn create(
+    block_height: u32,
     statechain_id: &str,
     client_seckey: &SecretKey,
     client_pubkey: &PublicKey,
@@ -20,9 +21,11 @@ pub async fn create(
 
     let outputs = [output].to_vec();
 
+    let lock_time = absolute::LockTime::from_height(block_height).expect("valid height");
+
     let tx1 = Transaction {
         version: 2,
-        lock_time: absolute::LockTime::ZERO,
+        lock_time,
         input: vec![TxIn {
             previous_output: OutPoint { txid: input_txid, vout: input_vout },
             script_sig: ScriptBuf::new(),
