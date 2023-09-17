@@ -20,7 +20,7 @@ pub struct DepositRequestPayload {
 
 pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> Result<(), CError> {
 
-    let (statechain_id, client_secret_key, client_pubkey_share, server_pubkey_share) = init(pool, token_id, amount, network).await;
+    let (statechain_id, client_secret_key, client_pubkey_share, to_address, server_pubkey_share) = init(pool, token_id, amount, network).await;
     let (aggregate_pub_key, address) = create_agg_pub_key(pool, &client_pubkey_share, &server_pubkey_share, network).await?;
 
     let client = electrum_client::Client::new("tcp://127.0.0.1:50001").unwrap();
@@ -60,8 +60,6 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
     let absolute_fee: u64 = TX_SIZE * fee_rate_sats_per_byte; 
     let amount_out = utxo.value - absolute_fee;
 
-    let to_address = Address::p2tr(&Secp256k1::new(), client_pubkey_share.x_only_public_key().0, None, network);
-
     let tx_out = TxOut { value: amount_out, script_pubkey: to_address.script_pubkey() };
 
     let block_header = electrum::block_headers_subscribe_raw(&client);
@@ -95,7 +93,7 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
 }
 
-pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> (String, SecretKey, PublicKey, PublicKey) {
+pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> (String, SecretKey, PublicKey, Address, PublicKey) {
     println!("deposit {} {}", token_id, amount);
 
     let derivation_path = "m/86h/0h/0h";
@@ -103,10 +101,12 @@ pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, 
     let address_index = key_derivation::get_next_address_index(pool, change_index).await;
     let mut agg_key_data = key_derivation::generate_new_key(pool, derivation_path, change_index, address_index, network).await;
     agg_key_data.token_id = Some(token_id);
-    key_derivation::insert_agg_key_data(pool, &agg_key_data).await;
 
     let client_secret_key = agg_key_data.secret_key;
     let client_pubkey_share = agg_key_data.public_key;
+    let backup_address = Address::p2tr(&Secp256k1::new(), client_pubkey_share.x_only_public_key().0, None, network);
+
+    key_derivation::insert_agg_key_data(pool, &agg_key_data, &backup_address).await;
 
     let derivation_path = "m/89h/0h/0h";
     let mut auth_key_data = key_derivation::generate_new_key(pool, derivation_path, change_index, address_index, network).await;
@@ -166,7 +166,7 @@ pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, 
 
     update_statechain_id(pool, statechain_id.clone(), &client_pubkey_share).await;
 
-    (statechain_id, client_secret_key, client_pubkey_share, server_pubkey_share)
+    (statechain_id, client_secret_key, client_pubkey_share, backup_address, server_pubkey_share)
 }
 
 pub async fn update_statechain_id(pool: &sqlx::Pool<Sqlite>, statechain_id: String, client_pubkey: &PublicKey) {

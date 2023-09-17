@@ -70,8 +70,9 @@ async fn main() {
                 unconfirmed_balance: i64,
             }
 
-            let addresses = wallet::get_all_addresses(&pool, network).await;
-            let result: Vec<Balance> = addresses.iter().map(|address| {
+            let (agg_addresses, backup_addresses) = wallet::get_all_addresses(&pool, network).await;
+
+            let agg_result: Vec<Balance> = agg_addresses.iter().map(|address| {
                 let balance_res = electrum::get_address_balance(&client, &address);
                 Balance {
                     address: address.to_string(),
@@ -80,7 +81,19 @@ async fn main() {
                 }
             }).collect();
 
-            println!("{}", serde_json::to_string_pretty(&json!(result)).unwrap());
+            let backup_result: Vec<Balance> = backup_addresses.iter().map(|address| {
+                let balance_res = electrum::get_address_balance(&client, &address);
+                Balance {
+                    address: address.to_string(),
+                    balance: balance_res.confirmed,
+                    unconfirmed_balance: balance_res.unconfirmed,
+                }
+            }).collect();
+
+            println!("{}", serde_json::to_string_pretty(&json!({
+                "statecoins": agg_result,
+                "backup addresses": backup_result,
+            })).unwrap());
         },
     };
 

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use bitcoin::{Network, bip32::{ExtendedPrivKey, DerivationPath, ExtendedPubKey, ChildNumber}};
+use bitcoin::{Network, bip32::{ExtendedPrivKey, DerivationPath, ExtendedPubKey, ChildNumber}, Address};
 use secp256k1_zkp::{PublicKey, ffi::types::AlignedType, Secp256k1, SecretKey};
 use sqlx::{Sqlite, Row};
 use uuid::Uuid;
@@ -94,16 +94,17 @@ pub async fn generate_new_key(pool: &sqlx::Pool<Sqlite>, derivation_path: &str, 
     }
 }
 
-pub async fn insert_agg_key_data(pool: &sqlx::Pool<Sqlite>, key_data: &KeyData)  {
+pub async fn insert_agg_key_data(pool: &sqlx::Pool<Sqlite>, key_data: &KeyData, backup_address: &Address)  {
 
     let query = 
-        "INSERT INTO signer_data (token_id, client_seckey_share, client_pubkey_share, fingerprint, agg_key_derivation_path, change_index, address_index) \
-        VALUES ($1, $2, $3, $4, $5, $6, $7)";
+        "INSERT INTO signer_data (token_id, client_seckey_share, client_pubkey_share, backup_address, fingerprint, agg_key_derivation_path, change_index, address_index) \
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
 
     let _ = sqlx::query(query)
         .bind(&key_data.token_id.unwrap().to_string())
         .bind(&key_data.secret_key.secret_bytes().to_vec())
         .bind(&key_data.public_key.serialize().to_vec())
+        .bind(&backup_address.to_string())
         .bind(&key_data.fingerprint)
         .bind(&key_data.derivation_path)
         .bind(key_data.change_index)
