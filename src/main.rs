@@ -4,8 +4,13 @@ mod error;
 mod electrum;
 mod wallet;
 mod transaction;
+mod send_backup;
 
+use std::str::FromStr;
+
+use bitcoin::{blockdata::fee_rate, Address};
 use clap::{Parser, Subcommand};
+use electrum_client::ListUnspentRes;
 use serde::{Serialize, Deserialize};
 use serde_json::json;
 use sqlx::{Sqlite, migrate::MigrateDatabase, SqlitePool};
@@ -25,6 +30,8 @@ enum Commands {
     Deposit { token_id: String, amount: u64 },
     /// Get a wallet balance
     GetBalance { },
+    /// Send all backup funds to the address provided
+    SendBackup { address: String, fee_rate: Option<u64> },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -95,6 +102,35 @@ async fn main() {
                 "backup addresses": backup_result,
             })).unwrap());
         },
+        Commands::SendBackup { address, fee_rate } => {
+
+            let to_address = bitcoin::Address::from_str(&address).unwrap().require_network(network).unwrap();
+
+            let fee_rate = match fee_rate {
+                Some(fee_rate) => fee_rate,
+                None => {
+                    let fee_rate_btc_per_kb = electrum::estimate_fee(&client, 1);
+                    let fee_rate_sats_per_byte = (fee_rate_btc_per_kb * 100000.0) as u64;
+                    fee_rate_sats_per_byte
+                },
+            };
+
+            let (_, backup_addresses) = wallet::get_all_addresses(&pool, network).await;
+
+            let mut list_unspent = Vec::<(ListUnspentRes, Address)>::new(); 
+
+            for address in backup_addresses {
+                let address_utxos = electrum::get_script_list_unspent(&client, &address);
+                for utxo in address_utxos {
+                    list_unspent.push((utxo, address.clone()));
+                }
+            }
+
+            let list_utxo = send_backup::get_address_info(&pool, list_unspent).await;
+
+
+            send_backup::send_all_funds(&list_utxo, &to_address, fee_rate);
+        }
     };
 
     pool.close().await;
