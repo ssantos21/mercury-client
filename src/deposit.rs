@@ -1,9 +1,9 @@
 use std::{str::FromStr, thread, time::Duration};
 
-use bitcoin::{Network, secp256k1, hashes::sha256, Address, address, TxOut, blockdata::fee_rate};
+use bitcoin::{Network, secp256k1, hashes::sha256, Address, TxOut, Txid};
 use secp256k1_zkp::{Secp256k1, Message, PublicKey, musig::MusigKeyAggCache, SecretKey, XOnlyPublicKey};
 use serde::{Serialize, Deserialize};
-use sqlx::Sqlite;
+use sqlx::{Sqlite, Row};
 
 use crate::{key_derivation, error::CError, electrum};
 
@@ -18,7 +18,7 @@ pub struct DepositRequestPayload {
     signed_token_id: String,
 }
 
-pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> Result<(), CError> {
+pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> Result<String, CError> {
 
     let (statechain_id, client_secret_key, client_pubkey_share, to_address, server_pubkey_share) = init(pool, token_id, amount, network).await;
     let (aggregate_pub_key, address) = create_agg_pub_key(pool, &client_pubkey_share, &server_pubkey_share, network).await?;
@@ -82,14 +82,11 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
         utxo.value, 
         tx_out).await.unwrap();
 
-    println!("tx size: {}", tx.vsize());
-
     let tx_bytes = bitcoin::consensus::encode::serialize(&tx);
-    let txid = electrum::transaction_broadcast_raw(&client, &tx_bytes);
 
-    println!("txid sent: {}", txid);
+    update_deposit_backup_tx(pool, &tx_bytes, &client_pubkey_share).await;
 
-    Ok(())
+    Ok(statechain_id)
 
 }
 
@@ -208,4 +205,41 @@ pub async fn create_agg_pub_key(pool: &sqlx::Pool<Sqlite>, client_pubkey: &Publi
 
     Ok((agg_pk,address))
 
+}
+
+async fn update_deposit_backup_tx(pool: &sqlx::Pool<Sqlite>, tx_bytes: &Vec<u8>, client_pubkey: &PublicKey) {
+
+    let query = "\
+        UPDATE signer_data \
+        SET deposit_backup_tx = $1 \
+        WHERE client_pubkey_share = $2";
+
+    let _ = sqlx::query(query)
+        .bind(tx_bytes)
+        .bind(&client_pubkey.serialize().to_vec())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+pub async fn broadcast_backup_tx(pool: &sqlx::Pool<Sqlite>, statechain_id: &str) -> Txid {
+    
+    let query = "\
+        SELECT deposit_backup_tx \
+        FROM signer_data \
+        WHERE statechain_id = $1";
+
+    let row = sqlx::query(query)
+        .bind(statechain_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+    let tx_bytes = row.get::<Vec<u8>, _>("deposit_backup_tx");
+
+    let client = electrum_client::Client::new("tcp://127.0.0.1:50001").unwrap();
+    
+    let txid = electrum::transaction_broadcast_raw(&client, &tx_bytes);
+
+    txid
 }

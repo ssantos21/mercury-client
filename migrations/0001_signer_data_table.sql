@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS signer_data (
     auth_pubkey BLOB UNIQUE,
     
     fingerprint TEXT,
+
+    deposit_backup_tx BLOB,
     
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

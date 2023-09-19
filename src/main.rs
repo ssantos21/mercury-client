@@ -8,7 +8,7 @@ mod send_backup;
 
 use std::str::FromStr;
 
-use bitcoin::{blockdata::fee_rate, Address};
+use bitcoin::Address;
 use clap::{Parser, Subcommand};
 use electrum_client::ListUnspentRes;
 use serde::{Serialize, Deserialize};
@@ -30,15 +30,14 @@ enum Commands {
     Deposit { token_id: String, amount: u64 },
     /// Get a wallet balance
     GetBalance { },
+    /// Broadcast the backup transaction to the network
+    BroadcastBackupTransaction { statechain_id: String },
     /// Send all backup funds to the address provided
     SendBackup { address: String, fee_rate: Option<u64> },
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-
-    println!("uuid: {}", uuid::Uuid::new_v4().to_string());
-
     // let network = bitcoin::Network::Bitcoin;
     let network = bitcoin::Network::Signet;
 
@@ -62,11 +61,11 @@ async fn main() {
 
     match cli.command {
         Commands::Deposit { token_id, amount } => {
-
-
-
             let token_id = uuid::Uuid::new_v4() ; // uuid::Uuid::parse_str(&token_id).unwrap();
-            deposit::execute(&pool, token_id, amount, network).await;
+            let statechain_id = deposit::execute(&pool, token_id, amount, network).await.unwrap();
+            println!("{}", serde_json::to_string_pretty(&json!({
+                "statechain_id": statechain_id,
+            })).unwrap());
         },
         Commands::GetBalance {  } => {
 
@@ -100,6 +99,14 @@ async fn main() {
             println!("{}", serde_json::to_string_pretty(&json!({
                 "statecoins": agg_result,
                 "backup addresses": backup_result,
+            })).unwrap());
+        },
+        Commands::BroadcastBackupTransaction { statechain_id } => {
+
+            let txid = deposit::broadcast_backup_tx(&pool, &statechain_id).await;
+
+            println!("{}", serde_json::to_string_pretty(&json!({
+                "txid": txid,
             })).unwrap());
         },
         Commands::SendBackup { address, fee_rate } => {
