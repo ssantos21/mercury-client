@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use bip39::{Mnemonic, Language};
 use bitcoin::{Network, bip32::{ExtendedPrivKey, DerivationPath, ExtendedPubKey, ChildNumber}, Address};
 use secp256k1_zkp::{PublicKey, ffi::types::AlignedType, Secp256k1, SecretKey};
 use sqlx::{Sqlite, Row};
@@ -139,4 +140,12 @@ pub struct KeyData {
     pub derivation_path: String,
     pub change_index: u32,
     pub address_index: u32,
+}
+
+pub async fn get_mnemonic(pool: &sqlx::Pool<Sqlite>) -> String {
+    let seed = generate_or_get_seed(pool).await;
+
+    let mnemonic = Mnemonic::from_entropy_in(Language::English,&seed).unwrap();
+
+    mnemonic.to_string()
 }

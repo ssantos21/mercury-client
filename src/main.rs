@@ -26,6 +26,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Show mnemonic
+    ShowMnemonic { },
     /// Create Aggregated Public Key
     Deposit { token_id: String, amount: u64 },
     /// Get a wallet balance
@@ -60,6 +62,12 @@ async fn main() {
         .unwrap();
 
     match cli.command {
+        Commands::ShowMnemonic { } => {
+            let mnemonic = key_derivation::get_mnemonic(&pool).await;
+            println!("{}", serde_json::to_string_pretty(&json!({
+                "mnemonic": mnemonic,
+            })).unwrap());
+        },
         Commands::Deposit { token_id, amount } => {
             let token_id = uuid::Uuid::new_v4() ; // uuid::Uuid::parse_str(&token_id).unwrap();
             let statechain_id = deposit::execute(&pool, token_id, amount, network).await.unwrap();
