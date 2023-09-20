@@ -91,15 +91,12 @@ pub fn send_all_funds(list_utxo: &Vec::<AddressInfo>, to_address: &Address, fee_
     let tx_bytes = bitcoin::consensus::encode::serialize(&tx);
     let txid = electrum::transaction_broadcast_raw(&client, &tx_bytes);
 
-    println!("tx size: {}", tx.vsize());
     println!("--> txid sent: {}", txid);
 
 
 }
 
 fn create_transaction(inputs_info: &Vec::<AddressInfo>, outputs: &Vec<TxOut>) -> Result<Transaction, Box<dyn std::error::Error>> {
-
-    println!("inputs_info: {:?}", inputs_info);
 
     let secp = Secp256k1::new();
 
@@ -167,8 +164,6 @@ fn create_transaction(inputs_info: &Vec::<AddressInfo>, outputs: &Vec<TxOut>) ->
 
     // SIGNER
     let unsigned_tx = psbt.unsigned_tx.clone();
-
-    println!("psbt.inputs.len: {}", psbt.inputs.len());
 
     let mut input_txouts = Vec::<TxOut>::new();
     for input_info in inputs_info {

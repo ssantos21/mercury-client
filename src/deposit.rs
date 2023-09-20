@@ -24,20 +24,8 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
     let (aggregate_pub_key, address) = create_agg_pub_key(pool, &client_pubkey_share, &server_pubkey_share, network).await?;
 
     let client = electrum_client::Client::new("tcp://127.0.0.1:50001").unwrap();
-    // let mut history = electrum::get_address_history(&client, &address);
 
     println!("address: {}", address.to_string());
-
-/*     println!("waiting for deposit ....");
-    while history.len() == 0 {
-        history = electrum::get_address_history(&client, &address);
-    }
-
-    println!("deposit received");
-
-    let hitory_res = history.pop().unwrap();
-
-    println!("tx_hash: {}", hitory_res.tx_hash); */
 
     println!("waiting for deposit ....");
 
@@ -52,8 +40,6 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
     let utxo = utxo_list.pop().unwrap();
 
-    println!("utxo: {:?}", utxo);
-
     let fee_rate_btc_per_kb = electrum::estimate_fee(&client, 1);
     let fee_rate_sats_per_byte = (fee_rate_btc_per_kb * 100000.0) as u64;
 
@@ -66,8 +52,6 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
     let mut block_height = block_header.height;
 
     block_height = block_height + 12000;
-
-    println!("block_height: {}", block_height);
 
     let tx = crate::transaction::create(
         pool,
@@ -92,7 +76,6 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 }
 
 pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> (String, SecretKey, PublicKey, Address, PublicKey) {
-    println!("deposit {} {}", token_id, amount);
 
     let derivation_path = "m/86h/0h/0h";
     let change_index = 0;
@@ -147,8 +130,6 @@ pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, 
             panic!("error: {}", err);
         },
     };
-
-    println!("value: {}", value);
 
     #[derive(Serialize, Deserialize)]
     pub struct PublicNonceRequestPayload<'r> {

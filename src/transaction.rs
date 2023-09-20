@@ -83,8 +83,6 @@ pub async fn create(
             &secp,
         ).await.unwrap();
 
-        println!("sig: {}", sig.to_string());
-
         let final_signature = taproot::Signature { sig, hash_ty };
 
         input.tap_key_sig = Some(final_signature);
@@ -172,11 +170,6 @@ async fn musig_sign_psbt_taproot(
 )  -> Result<Signature, CError>  {
     let msg: Message = hash.into();
 
-    // let msg = Message::from_hashed_data::<sha256::Hash>(hash.as_ref());
-
-    let msg_hex = hex::encode(msg.as_ref());
-    println!("msg: {}", msg_hex);
-
     let client_session_id = MusigSessionId::new(&mut rand::thread_rng());
 
     let (client_sec_nonce, client_pub_nonce) = new_musig_nonce_pair(&secp, client_session_id, None, Some(client_seckey.to_owned()), client_pubkey.to_owned(), None, None).unwrap();
@@ -186,7 +179,7 @@ async fn musig_sign_psbt_taproot(
     let blinding_factor = BlindingFactor::new(&mut rand::thread_rng());
     let blind_commitment = sha256::Hash::hash(blinding_factor.as_bytes());
 
-    update_commitments(pool, &client_sec_nonce.serialize(), blinding_factor.as_bytes(), client_pubkey);
+    update_commitments(pool, &client_sec_nonce.serialize(), blinding_factor.as_bytes(), client_pubkey).await;
 
     let endpoint = "http://127.0.0.1:8000";
     let path = "sign/first";
@@ -273,10 +266,8 @@ async fn musig_sign_psbt_taproot(
         session: &hex::encode(session.serialize()),
     };
 
-    println!("payload signature: {:?}", payload);
-
     let endpoint = "http://127.0.0.1:8000";
-    let path = "partial_signature";
+    let path = "sign/second";
 
     let client: reqwest::Client = reqwest::Client::new();
     let request = client.post(&format!("{}/{}", endpoint, path));
@@ -317,9 +308,6 @@ async fn musig_sign_psbt_taproot(
     assert!(agg_pk.eq(aggregated_pubkey));
 
     assert!(secp.verify_schnorr(&sig, &msg, &tweaked_pubkey.x_only_public_key().0).is_ok());
-
-    println!("aggregated_pubkey: {}", aggregated_pubkey.to_string());
-    println!("agg_pk: {}           ", agg_pk .to_string());
    
     Ok(sig)
 }

@@ -149,6 +149,4 @@ async fn main() {
     };
 
     pool.close().await;
-
-    println!("Hello, world!");
 }
