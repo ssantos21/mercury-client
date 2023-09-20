@@ -138,6 +138,7 @@ pub struct PartialSignatureRequestPayload<'r> {
     keyaggcoef: &'r str,
     negate_seckey: u8,
     session: &'r str,
+    signed_statechain_id: &'r str,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -269,6 +270,7 @@ async fn musig_sign_psbt_taproot(
         keyaggcoef: &hex::encode(key_agg_coef.serialize()),
         negate_seckey,
         session: &hex::encode(session.serialize()),
+        signed_statechain_id: &signed_statechain_id.to_string(),
     };
 
     let endpoint = "http://127.0.0.1:8000";
