@@ -1,7 +1,7 @@
 use std::{str::FromStr, thread, time::Duration};
 
 use bitcoin::{Network, secp256k1, hashes::sha256, Address, TxOut, Txid};
-use secp256k1_zkp::{Secp256k1, Message, PublicKey, musig::MusigKeyAggCache, SecretKey, XOnlyPublicKey};
+use secp256k1_zkp::{Secp256k1, Message, PublicKey, musig::MusigKeyAggCache, SecretKey, XOnlyPublicKey, schnorr::Signature};
 use serde::{Serialize, Deserialize};
 use sqlx::{Sqlite, Row};
 
@@ -20,7 +20,7 @@ pub struct DepositRequestPayload {
 
 pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> Result<String, CError> {
 
-    let (statechain_id, client_secret_key, client_pubkey_share, to_address, server_pubkey_share) = init(pool, token_id, amount, network).await;
+    let (statechain_id, client_secret_key, client_pubkey_share, to_address, server_pubkey_share, signed_statechain_id) = init(pool, token_id, amount, network).await;
     let (aggregate_pub_key, address) = create_agg_pub_key(pool, &client_pubkey_share, &server_pubkey_share, network).await?;
 
     let client = electrum_client::Client::new("tcp://127.0.0.1:50001").unwrap();
@@ -57,6 +57,7 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
         pool,
         block_height as u32,
         &statechain_id,
+        &signed_statechain_id,
         &client_secret_key,
         &client_pubkey_share,
         &server_pubkey_share,
@@ -75,7 +76,7 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
 }
 
-pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> (String, SecretKey, PublicKey, Address, PublicKey) {
+pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> (String, SecretKey, PublicKey, Address, PublicKey, Signature) {
 
     let derivation_path = "m/86h/0h/0h";
     let change_index = 0;
@@ -145,7 +146,10 @@ pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, 
 
     update_statechain_id(pool, statechain_id.clone(), &client_pubkey_share).await;
 
-    (statechain_id, client_secret_key, client_pubkey_share, backup_address, server_pubkey_share)
+    let msg = Message::from_hashed_data::<sha256::Hash>(statechain_id.to_string().as_bytes());
+    let signed_statechain_id = secp.sign_schnorr(&msg, &keypair);
+
+    (statechain_id, client_secret_key, client_pubkey_share, backup_address, server_pubkey_share, signed_statechain_id)
 }
 
 pub async fn update_statechain_id(pool: &sqlx::Pool<Sqlite>, statechain_id: String, client_pubkey: &PublicKey) {

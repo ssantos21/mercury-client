@@ -11,6 +11,7 @@ pub async fn create(
     pool: &sqlx::Pool<Sqlite>,
     block_height: u32,
     statechain_id: &str,
+    signed_statechain_id: &Signature,
     client_seckey: &SecretKey,
     client_pubkey: &PublicKey,
     server_pubkey: &PublicKey,
@@ -75,6 +76,7 @@ pub async fn create(
         let sig = musig_sign_psbt_taproot(
             pool,
             statechain_id,
+            signed_statechain_id,
             client_seckey,
             client_pubkey,
             server_pubkey,
@@ -122,6 +124,7 @@ pub struct SignFirstRequestPayload<'r> {
     statechain_id: &'r str,
     r2_commitment: &'r str,
     blind_commitment: &'r str,
+    signed_statechain_id: &'r str,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -161,6 +164,7 @@ async fn update_commitments(pool: &sqlx::Pool<Sqlite>, client_sec_nonce: &[u8; 1
 async fn musig_sign_psbt_taproot(
     pool: &sqlx::Pool<Sqlite>,
     statechain_id: &str,
+    signed_statechain_id: &Signature,
     client_seckey: &SecretKey,
     client_pubkey: &PublicKey,
     server_pubkey: &PublicKey,
@@ -191,6 +195,7 @@ async fn musig_sign_psbt_taproot(
         statechain_id,
         r2_commitment: &r2_commitment.to_string(),
         blind_commitment: &blind_commitment.to_string(),
+        signed_statechain_id: &signed_statechain_id.to_string(),
     };
 
     let value = match request.json(&sign_first_request_payload).send().await {
