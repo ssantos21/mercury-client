@@ -78,39 +78,18 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
 pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, network: Network) -> (String, SecretKey, PublicKey, Address, PublicKey, Signature) {
 
-    let derivation_path = "m/86h/0h/0h";
-    let change_index = 0;
-    let address_index = key_derivation::get_next_address_index(pool, change_index).await;
-    let mut agg_key_data = key_derivation::generate_new_key(pool, derivation_path, change_index, address_index, network).await;
-    agg_key_data.token_id = Some(token_id);
-
-    let client_secret_key = agg_key_data.secret_key;
-    let client_pubkey_share = agg_key_data.public_key;
-    let backup_address = Address::p2tr(&Secp256k1::new(), client_pubkey_share.x_only_public_key().0, None, network);
-
-    key_derivation::insert_agg_key_data(pool, &agg_key_data, &backup_address).await;
-
-    let derivation_path = "m/89h/0h/0h";
-    let mut auth_key_data = key_derivation::generate_new_key(pool, derivation_path, change_index, address_index, network).await;
-    auth_key_data.token_id = Some(token_id);
-
-    assert!(auth_key_data.fingerprint == agg_key_data.fingerprint);
-    assert!(auth_key_data.address_index == agg_key_data.address_index);
-    assert!(auth_key_data.change_index == agg_key_data.change_index);
-    assert!(auth_key_data.derivation_path != agg_key_data.derivation_path);
-
-    key_derivation::update_auth_key_data(pool, &auth_key_data, &client_pubkey_share).await;
+    let address_data = key_derivation::get_new_address(pool, Some(token_id), Some(amount), network).await;
 
     let msg = Message::from_hashed_data::<sha256::Hash>(token_id.to_string().as_bytes());
 
     let secp = Secp256k1::new();
-    let auth_secret_key = auth_key_data.secret_key;
+    let auth_secret_key = address_data.auth_secret_key;
     let keypair = secp256k1::KeyPair::from_seckey_slice(&secp, auth_secret_key.as_ref()).unwrap();
     let signed_token_id = secp.sign_schnorr(&msg, &keypair);
     
     let deposit_request_payload = DepositRequestPayload {
         amount,
-        auth_key: auth_key_data.public_key.x_only_public_key().0.to_string(),
+        auth_key: address_data.auth_xonly_pubkey.to_string(),
         token_id: token_id.to_string(),
         signed_token_id: signed_token_id.to_string(),
     };
@@ -144,12 +123,12 @@ pub async fn init(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u64, 
 
     let statechain_id = response.statechain_id.to_string();
 
-    update_statechain_id(pool, statechain_id.clone(), &client_pubkey_share).await;
+    update_statechain_id(pool, statechain_id.clone(), &address_data.client_pubkey_share).await;
 
     let msg = Message::from_hashed_data::<sha256::Hash>(statechain_id.to_string().as_bytes());
     let signed_statechain_id = secp.sign_schnorr(&msg, &keypair);
 
-    (statechain_id, client_secret_key, client_pubkey_share, backup_address, server_pubkey_share, signed_statechain_id)
+    (statechain_id, address_data.client_secret_key, address_data.client_pubkey_share, address_data.backup_address, server_pubkey_share, signed_statechain_id)
 }
 
 pub async fn update_statechain_id(pool: &sqlx::Pool<Sqlite>, statechain_id: String, client_pubkey: &PublicKey) {

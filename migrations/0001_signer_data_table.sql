@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS signer_data (
     client_pubkey_share BLOB UNIQUE,
     backup_address TEXT,
 
+    amount INT,
+
     client_sec_nonce BLOB,
     blinding_factor BLOB,
 
@@ -26,6 +28,8 @@ CREATE TABLE IF NOT EXISTS signer_data (
 
     auth_seckey BLOB UNIQUE,
     auth_pubkey BLOB UNIQUE,
+
+    transfer_address TEXT,
     
     fingerprint TEXT,
 

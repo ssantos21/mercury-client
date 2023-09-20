@@ -36,6 +36,8 @@ enum Commands {
     BroadcastBackupTransaction { statechain_id: String },
     /// Send all backup funds to the address provided
     SendBackup { address: String, fee_rate: Option<u64> },
+    /// Generates a transfer address to receive funds
+    NewTransferAddress { },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -145,6 +147,12 @@ async fn main() {
 
 
             send_backup::send_all_funds(&list_utxo, &to_address, fee_rate);
+        },
+        Commands::NewTransferAddress { } => {
+            let address_data = key_derivation::get_new_address(&pool, None, None, network).await;
+            println!("{}", serde_json::to_string_pretty(&json!({
+                "transfer_address": address_data.transfer_address,
+            })).unwrap());
         }
     };
 
