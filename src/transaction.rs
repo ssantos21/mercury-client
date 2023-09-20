@@ -1,12 +1,14 @@
 use std::{str::FromStr, collections::BTreeMap};
 
-use bitcoin::{Txid, ScriptBuf, Transaction, absolute, TxIn, OutPoint, Witness, TxOut, psbt::{Psbt, Input, PsbtSighashType}, sighash::{TapSighashType, SighashCache, self, TapSighash}, secp256k1, taproot::{TapTweakHash, self}, hashes::Hash};
+use bitcoin::{Txid, ScriptBuf, Transaction, absolute, TxIn, OutPoint, Witness, TxOut, psbt::{Psbt, Input, PsbtSighashType}, sighash::{TapSighashType, SighashCache, self, TapSighash}, secp256k1, taproot::{TapTweakHash, self}, hashes::{Hash, sha256}};
 use secp256k1_zkp::{SecretKey, PublicKey, XOnlyPublicKey, Secp256k1, schnorr::Signature, Message, musig::{MusigSessionId, MusigPubNonce, MusigKeyAggCache, MusigAggNonce, BlindingFactor, MusigSession, MusigPartialSignature}, new_musig_nonce_pair, KeyPair};
 use serde::{Serialize, Deserialize};
+use sqlx::Sqlite;
 
 use crate::error::CError;
 
 pub async fn create(
+    pool: &sqlx::Pool<Sqlite>,
     block_height: u32,
     statechain_id: &str,
     client_seckey: &SecretKey,
@@ -48,6 +50,12 @@ pub async fn create(
     let secp = Secp256k1::new();
     
     let unsigned_tx = psbt.unsigned_tx.clone();
+
+    // There must not be more than one input.
+    // The input is the funding transaction and the output the backup address.
+    // If there is more than one input, the UPDATE command below will rewrite the client_sec_nonce and blinding_factor.
+    assert!(psbt.inputs.len() == 1);
+
     for (vout, input) in psbt.inputs.iter_mut().enumerate() {
 
         let hash_ty = input
@@ -65,6 +73,7 @@ pub async fn create(
         ).unwrap();
 
         let sig = musig_sign_psbt_taproot(
+            pool,
             statechain_id,
             client_seckey,
             client_pubkey,
@@ -111,8 +120,10 @@ pub async fn create(
 
 
 #[derive(Serialize, Deserialize)]
-pub struct PublicNonceRequestPayload<'r> {
+pub struct SignFirstRequestPayload<'r> {
     statechain_id: &'r str,
+    r2_commitment: &'r str,
+    blind_commitment: &'r str,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -133,7 +144,24 @@ pub struct PartialSignatureResponsePayload<'r> {
     partial_sig: &'r str,
 }
 
+async fn update_commitments(pool: &sqlx::Pool<Sqlite>, client_sec_nonce: &[u8; 132], blinding_factor: &[u8; 32], client_pubkey: &PublicKey) {
+
+    let query = "\
+        UPDATE signer_data \
+        SET client_sec_nonce = $1, blinding_factor = $2 \
+        WHERE client_pubkey_share = $3";
+
+    let _ = sqlx::query(query)
+        .bind(client_sec_nonce.to_vec())
+        .bind(blinding_factor.to_vec())
+        .bind(&client_pubkey.serialize().to_vec())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 async fn musig_sign_psbt_taproot(
+    pool: &sqlx::Pool<Sqlite>,
     statechain_id: &str,
     client_seckey: &SecretKey,
     client_pubkey: &PublicKey,
@@ -153,17 +181,26 @@ async fn musig_sign_psbt_taproot(
 
     let (client_sec_nonce, client_pub_nonce) = new_musig_nonce_pair(&secp, client_session_id, None, Some(client_seckey.to_owned()), client_pubkey.to_owned(), None, None).unwrap();
 
+    let r2_commitment = sha256::Hash::hash(&client_sec_nonce.serialize());
+
+    let blinding_factor = BlindingFactor::new(&mut rand::thread_rng());
+    let blind_commitment = sha256::Hash::hash(blinding_factor.as_bytes());
+
+    update_commitments(pool, &client_sec_nonce.serialize(), blinding_factor.as_bytes(), client_pubkey);
+
     let endpoint = "http://127.0.0.1:8000";
-    let path = "public_nonce";
+    let path = "sign/first";
 
     let client: reqwest::Client = reqwest::Client::new();
     let request = client.post(&format!("{}/{}", endpoint, path));
 
-    let payload = PublicNonceRequestPayload {
+    let sign_first_request_payload = SignFirstRequestPayload {
         statechain_id,
+        r2_commitment: &r2_commitment.to_string(),
+        blind_commitment: &blind_commitment.to_string(),
     };
 
-    let value = match request.json(&payload).send().await {
+    let value = match request.json(&sign_first_request_payload).send().await {
         Ok(response) => {
             let text = response.text().await.unwrap();
             text
@@ -196,8 +233,6 @@ async fn musig_sign_psbt_taproot(
     let tweaked_pubkey = key_agg_cache.pubkey_xonly_tweak_add(secp, tweak).unwrap();
 
     let aggnonce = MusigAggNonce::new(&secp, &[client_pub_nonce, server_pub_nonce]);
-
-    let blinding_factor = BlindingFactor::new(&mut rand::thread_rng());
 
     let session = MusigSession::new_blinded(
         &secp,

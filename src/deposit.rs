@@ -70,6 +70,7 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
     println!("block_height: {}", block_height);
 
     let tx = crate::transaction::create(
+        pool,
         block_height as u32,
         &statechain_id,
         &client_secret_key,

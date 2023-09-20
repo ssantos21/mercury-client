@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS signer_data (
     client_pubkey_share BLOB UNIQUE,
     backup_address TEXT,
 
+    client_sec_nonce BLOB,
+    blinding_factor BLOB,
+
     server_pubkey_share BLOB,
     aggregated_pubkey BLOB,
     p2tr_agg_address TEXT,
