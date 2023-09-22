@@ -1,6 +1,7 @@
 use std::{str::FromStr, thread, time::Duration};
 
 use bitcoin::{Network, secp256k1, hashes::sha256, Address, TxOut, Txid};
+use electrum_client::ListUnspentRes;
 use secp256k1_zkp::{Secp256k1, Message, PublicKey, musig::MusigKeyAggCache, SecretKey, XOnlyPublicKey, schnorr::Signature};
 use serde::{Serialize, Deserialize};
 use sqlx::{Sqlite, Row};
@@ -29,18 +30,32 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
     println!("waiting for deposit ....");
 
-    let mut utxo_list = electrum::get_script_list_unspent(&client, &address);
-
     let delay = Duration::from_secs(5);
 
-    while utxo_list.len() == 0 {
-        utxo_list = electrum::get_script_list_unspent(&client, &address);
+    let mut utxo: Option<ListUnspentRes> = None;
+
+    loop {
+        let utxo_list = electrum::get_script_list_unspent(&client, &address);
+
+        for unspent in utxo_list {
+            if unspent.value == amount {
+                utxo = Some(unspent);
+                break;
+            }
+        }
+
+        if utxo.is_some() {
+            break;
+        }
+
         thread::sleep(delay);
     }
 
-    let utxo = utxo_list.pop().unwrap();
+    let utxo = utxo.unwrap();
 
-    let fee_rate_btc_per_kb = electrum::estimate_fee(&client, 1);
+    update_funding_tx_outpoint(pool, &utxo.tx_hash, utxo.tx_pos as u32, &statechain_id).await;
+
+    let fee_rate_btc_per_kb = electrum::estimate_fee(&client, 3);
     let fee_rate_sats_per_byte = (fee_rate_btc_per_kb * 100000.0) as u64;
 
     let absolute_fee: u64 = TX_SIZE * fee_rate_sats_per_byte; 
@@ -53,8 +68,7 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
     block_height = block_height + 12000;
 
-    let tx = crate::transaction::create(
-        pool,
+    let (tx, client_pub_nonce, blinding_factor) = crate::transaction::create(
         block_height as u32,
         &statechain_id,
         &signed_statechain_id,
@@ -70,7 +84,9 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
     let tx_bytes = bitcoin::consensus::encode::serialize(&tx);
 
-    update_deposit_backup_tx(pool, &tx_bytes, &client_pubkey_share).await;
+    // update_deposit_backup_tx(pool, &tx_bytes, &client_pubkey_share).await;
+
+    crate::transaction::insert_transaction(pool, &tx_bytes, &client_pub_nonce.serialize(), blinding_factor.as_bytes(), &statechain_id).await;
 
     Ok(statechain_id)
 
@@ -172,6 +188,7 @@ pub async fn create_agg_pub_key(pool: &sqlx::Pool<Sqlite>, client_pubkey: &Publi
 
 }
 
+/*
 async fn update_deposit_backup_tx(pool: &sqlx::Pool<Sqlite>, tx_bytes: &Vec<u8>, client_pubkey: &PublicKey) {
 
     let query = "\
@@ -186,13 +203,31 @@ async fn update_deposit_backup_tx(pool: &sqlx::Pool<Sqlite>, tx_bytes: &Vec<u8>,
         .await
         .unwrap();
 }
+ */
+
+ async fn update_funding_tx_outpoint(pool: &sqlx::Pool<Sqlite>, txid: &Txid, vout: u32, statechain_id: &str) {
+
+    let query = "\
+        UPDATE signer_data \
+        SET funding_txid = $1, funding_vout = $2 \
+        WHERE statechain_id = $3";
+
+    let _ = sqlx::query(query)
+        .bind(&txid.to_string())
+        .bind(vout)
+        .bind(statechain_id)
+        .execute(pool)
+        .await
+        .unwrap();
+ }
 
 pub async fn broadcast_backup_tx(pool: &sqlx::Pool<Sqlite>, statechain_id: &str) -> Txid {
     
     let query = "\
-        SELECT deposit_backup_tx \
-        FROM signer_data \
-        WHERE statechain_id = $1";
+        SELECT backup_tx \
+        FROM backup_transaction \
+        WHERE tx_n = (SELECT MAX(tx_n) FROM backup_transaction WHERE statechain_id = $1)
+        AND statechain_id = $1";
 
     let row = sqlx::query(query)
         .bind(statechain_id)
@@ -200,7 +235,7 @@ pub async fn broadcast_backup_tx(pool: &sqlx::Pool<Sqlite>, statechain_id: &str)
         .await
         .unwrap();
 
-    let tx_bytes = row.get::<Vec<u8>, _>("deposit_backup_tx");
+    let tx_bytes = row.get::<Vec<u8>, _>("backup_tx");
 
     let client = electrum_client::Client::new("tcp://127.0.0.1:50001").unwrap();
     

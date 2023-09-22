@@ -36,8 +36,10 @@ enum Commands {
     BroadcastBackupTransaction { statechain_id: String },
     /// Send all backup funds to the address provided
     SendBackup { address: String, fee_rate: Option<u64> },
-    /// Generates a transfer address to receive funds
+    /// Generate a transfer address to receive funds
     NewTransferAddress { },
+    /// Send a statechain coin to a transfer address
+    TransferSend { recipient_address: String, statechain_id: String }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -153,6 +155,14 @@ async fn main() {
             println!("{}", serde_json::to_string_pretty(&json!({
                 "transfer_address": address_data.transfer_address,
             })).unwrap());
+        },
+        Commands::TransferSend { recipient_address, statechain_id } => {
+
+            let (_, new_user_pubkey, new_auth_pubkey) = key_derivation::decode_transfer_address(&recipient_address).unwrap();
+            println!("new_user_pubkey: {}", new_user_pubkey);
+            println!("new_auth_pubkey: {}", new_auth_pubkey);
+
+
         }
     };
 

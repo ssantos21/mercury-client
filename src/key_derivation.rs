@@ -202,11 +202,11 @@ pub fn decode_transfer_address(sc_address: &str) -> Result<(u8, PublicKey, Publi
         return Err(CError::Generic("Invalid address".to_string()));
     }
 
-    let x = Vec::<u8>::from_base32(&data).unwrap();
+    let decoded_data = Vec::<u8>::from_base32(&data).unwrap();
 
-    let version = x[0];
-    let user_pubkey = PublicKey::from_slice(&x[1..34]).unwrap();
-    let auth_pubkey = PublicKey::from_slice(&x[34..67]).unwrap();
+    let version = decoded_data[0];
+    let user_pubkey = PublicKey::from_slice(&decoded_data[1..34]).unwrap();
+    let auth_pubkey = PublicKey::from_slice(&decoded_data[34..67]).unwrap();
 
     Ok((version, user_pubkey, auth_pubkey))
 }

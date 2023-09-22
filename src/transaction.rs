@@ -3,12 +3,11 @@ use std::{str::FromStr, collections::BTreeMap};
 use bitcoin::{Txid, ScriptBuf, Transaction, absolute, TxIn, OutPoint, Witness, TxOut, psbt::{Psbt, Input, PsbtSighashType}, sighash::{TapSighashType, SighashCache, self, TapSighash}, secp256k1, taproot::{TapTweakHash, self}, hashes::{Hash, sha256}};
 use secp256k1_zkp::{SecretKey, PublicKey, XOnlyPublicKey, Secp256k1, schnorr::Signature, Message, musig::{MusigSessionId, MusigPubNonce, MusigKeyAggCache, MusigAggNonce, BlindingFactor, MusigSession, MusigPartialSignature}, new_musig_nonce_pair, KeyPair};
 use serde::{Serialize, Deserialize};
-use sqlx::Sqlite;
+use sqlx::{Sqlite, Row};
 
 use crate::error::CError;
 
 pub async fn create(
-    pool: &sqlx::Pool<Sqlite>,
     block_height: u32,
     statechain_id: &str,
     signed_statechain_id: &Signature,
@@ -20,7 +19,7 @@ pub async fn create(
     input_pubkey: &XOnlyPublicKey, 
     input_scriptpubkey: &ScriptBuf, 
     input_amount: u64, 
-    output: TxOut) -> Result<Transaction, Box<dyn std::error::Error>> {
+    output: TxOut) -> Result<(Transaction, MusigPubNonce, BlindingFactor), Box<dyn std::error::Error>> {
 
     let outputs = [output].to_vec();
 
@@ -57,7 +56,10 @@ pub async fn create(
     // If there is more than one input, the UPDATE command below will rewrite the client_sec_nonce and blinding_factor.
     assert!(psbt.inputs.len() == 1);
 
-    for (vout, input) in psbt.inputs.iter_mut().enumerate() {
+    // for (vout, input) in psbt.inputs.iter_mut().enumerate() {
+
+        let vout = 0;
+        let input = psbt.inputs.iter_mut().nth(vout).unwrap();
 
         let hash_ty = input
             .sighash_type
@@ -73,8 +75,7 @@ pub async fn create(
             hash_ty,
         ).unwrap();
 
-        let sig = musig_sign_psbt_taproot(
-            pool,
+        let (sig, client_pub_nonce, blinding_factor) = musig_sign_psbt_taproot(
             statechain_id,
             signed_statechain_id,
             client_seckey,
@@ -88,7 +89,7 @@ pub async fn create(
         let final_signature = taproot::Signature { sig, hash_ty };
 
         input.tap_key_sig = Some(final_signature);
-    }
+    // }
 
     // FINALIZER
     psbt.inputs.iter_mut().for_each(|input| {
@@ -115,7 +116,7 @@ pub async fn create(
     .expect("failed to verify transaction");
 
 
-    Ok(tx)
+    Ok((tx, client_pub_nonce, blinding_factor))
 }
 
 
@@ -146,6 +147,7 @@ pub struct PartialSignatureResponsePayload<'r> {
     partial_sig: &'r str,
 }
 
+/*
 async fn update_commitments(pool: &sqlx::Pool<Sqlite>, client_sec_nonce: &[u8; 132], blinding_factor: &[u8; 32], client_pubkey: &PublicKey) {
 
     let query = "\
@@ -161,9 +163,9 @@ async fn update_commitments(pool: &sqlx::Pool<Sqlite>, client_sec_nonce: &[u8; 1
         .await
         .unwrap();
 }
+ */
 
 async fn musig_sign_psbt_taproot(
-    pool: &sqlx::Pool<Sqlite>,
     statechain_id: &str,
     signed_statechain_id: &Signature,
     client_seckey: &SecretKey,
@@ -172,7 +174,7 @@ async fn musig_sign_psbt_taproot(
     aggregated_pubkey: &XOnlyPublicKey,
     hash: TapSighash,
     secp: &Secp256k1<secp256k1::All>,
-)  -> Result<Signature, CError>  {
+)  -> Result<(Signature, MusigPubNonce, BlindingFactor), CError>  {
     let msg: Message = hash.into();
 
     let client_session_id = MusigSessionId::new(&mut rand::thread_rng());
@@ -184,7 +186,7 @@ async fn musig_sign_psbt_taproot(
     let blinding_factor = BlindingFactor::new(&mut rand::thread_rng());
     let blind_commitment = sha256::Hash::hash(blinding_factor.as_bytes());
 
-    update_commitments(pool, &client_sec_nonce.serialize(), blinding_factor.as_bytes(), client_pubkey).await;
+    // update_commitments(pool, &client_sec_nonce.serialize(), blinding_factor.as_bytes(), client_pubkey).await;
 
     let endpoint = "http://127.0.0.1:8000";
     let path = "sign/first";
@@ -316,5 +318,31 @@ async fn musig_sign_psbt_taproot(
 
     assert!(secp.verify_schnorr(&sig, &msg, &tweaked_pubkey.x_only_public_key().0).is_ok());
    
-    Ok(sig)
+    Ok((sig, client_pub_nonce, blinding_factor))
+}
+
+pub async fn insert_transaction(pool: &sqlx::Pool<Sqlite>, tx_bytes: &Vec<u8>, client_pub_nonce: &[u8; 66], blinding_factor: &[u8; 32], statechain_id: &str) { 
+
+    let row = sqlx::query("SELECT MAX(tx_n) FROM backup_transaction WHERE statechain_id = $1")
+        .bind(statechain_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+    let mut tx_n = row.get::<u32, _>(0);
+
+    tx_n = tx_n + 1;
+
+    let query = "INSERT INTO backup_transaction (tx_n, statechain_id, client_public_nonce, blinding_factor, backup_tx) \
+        VALUES ($1, $2, $3, $4, $5)";
+        let _ = sqlx::query(query)
+            .bind(tx_n)
+            .bind(statechain_id)
+            .bind(client_pub_nonce.to_vec())
+            .bind(blinding_factor.to_vec())
+            .bind(tx_bytes)
+            .execute(pool)
+            .await
+            .unwrap();
+
 }

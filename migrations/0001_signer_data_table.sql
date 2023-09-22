@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS signer_data (
 
     amount INT,
 
-    client_sec_nonce BLOB,
-    blinding_factor BLOB,
+    funding_txid TEXT,
+    funding_vout INT,
 
     server_pubkey_share BLOB,
     aggregated_pubkey BLOB,
@@ -34,6 +34,21 @@ CREATE TABLE IF NOT EXISTS signer_data (
     fingerprint TEXT,
 
     deposit_backup_tx BLOB,
+
+    coin_sent BOOLEAN DEFAULT FALSE,
     
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE TABLE IF NOT EXISTS backup_transaction (
+
+    tx_n INT,
+    statechain_id TEXT,
+    client_public_nonce BLOB,
+    blinding_factor BLOB,
+    backup_tx BLOB,
+    sent_to TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+
 );
