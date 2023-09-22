@@ -7,6 +7,50 @@ use sqlx::{Sqlite, Row};
 
 use crate::error::CError;
 
+async fn count_backup_tx(pool: &sqlx::Pool<Sqlite>, statechain_id: &str) -> u32 {
+
+    let row = sqlx::query("SELECT count(*) FROM backup_transaction WHERE statechain_id = $1")
+        .bind(statechain_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+    let count = row.get::<u32, _>(0);
+
+    count
+}
+
+pub async fn new(pool: &sqlx::Pool<Sqlite>, statechain_id: &str,) -> Result<(), CError> {
+    let endpoint = "http://127.0.0.1:8000";
+    let path = "info/config";
+
+    let client: reqwest::Client = reqwest::Client::new();
+    let request = client.get(&format!("{}/{}", endpoint, path));
+
+    let value = match request.send().await {
+        Ok(response) => {
+            let text = response.text().await.unwrap();
+            text
+        },
+        Err(err) => {
+            return Err(CError::Generic(err.to_string()));
+        },
+    };
+
+    let value: serde_json::Value = serde_json::from_str(value.as_str()).expect(&format!("failed to parse: {}", value.as_str()));
+
+    let initlock = value.get("initlock").unwrap().as_u64().unwrap();
+    let interval = value.get("interval").unwrap().as_u64().unwrap();
+    let qt_backup_tx = count_backup_tx(pool, statechain_id).await;
+
+    println!("initlock {}", initlock);
+    println!("interval {}", interval);
+    println!("qt_backup_tx {}", qt_backup_tx);
+
+    Ok(())
+
+}
+
 pub async fn create(
     block_height: u32,
     statechain_id: &str,

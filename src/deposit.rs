@@ -68,6 +68,8 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
 
     block_height = block_height + 12000;
 
+    crate::transaction::new(pool, &statechain_id,).await.unwrap();
+
     let (tx, client_pub_nonce, blinding_factor) = crate::transaction::create(
         block_height as u32,
         &statechain_id,
@@ -83,8 +85,6 @@ pub async fn execute(pool: &sqlx::Pool<Sqlite>, token_id: uuid::Uuid, amount: u6
         tx_out).await.unwrap();
 
     let tx_bytes = bitcoin::consensus::encode::serialize(&tx);
-
-    // update_deposit_backup_tx(pool, &tx_bytes, &client_pubkey_share).await;
 
     crate::transaction::insert_transaction(pool, &tx_bytes, &client_pub_nonce.serialize(), blinding_factor.as_bytes(), &statechain_id).await;
 
@@ -188,22 +188,6 @@ pub async fn create_agg_pub_key(pool: &sqlx::Pool<Sqlite>, client_pubkey: &Publi
 
 }
 
-/*
-async fn update_deposit_backup_tx(pool: &sqlx::Pool<Sqlite>, tx_bytes: &Vec<u8>, client_pubkey: &PublicKey) {
-
-    let query = "\
-        UPDATE signer_data \
-        SET deposit_backup_tx = $1 \
-        WHERE client_pubkey_share = $2";
-
-    let _ = sqlx::query(query)
-        .bind(tx_bytes)
-        .bind(&client_pubkey.serialize().to_vec())
-        .execute(pool)
-        .await
-        .unwrap();
-}
- */
 
  async fn update_funding_tx_outpoint(pool: &sqlx::Pool<Sqlite>, txid: &Txid, vout: u32, statechain_id: &str) {
 

@@ -33,8 +33,6 @@ CREATE TABLE IF NOT EXISTS signer_data (
     
     fingerprint TEXT,
 
-    deposit_backup_tx BLOB,
-
     coin_sent BOOLEAN DEFAULT FALSE,
     
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
